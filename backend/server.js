@@ -19,7 +19,17 @@ const client = new RunwayML({
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static('public'));
+
+// Serve static files from parent directory
+app.use(express.static(path.join(__dirname, '..')));
+
+// Serve uploads folder
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Root redirect
+app.get('/', (req, res) => {
+  res.redirect('/dashboard/login.html');
+});
 
 // Create uploads directory
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -43,7 +53,9 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// Store for projects (in production, use a database)
+// In-memory storage (replace with database in production)
+const companies = new Map();
+const leads = [];
 const projects = [];
 
 // ROUTE 1: Test endpoint
@@ -201,6 +213,380 @@ app.get('/api/prompts/:trade', (req, res) => {
 
   const prompts = promptLibrary[trade.toLowerCase()] || promptLibrary.general;
   res.json({ prompts });
+});
+
+// ============================================
+// NEW ROUTES FOR WIDGET & LEAD MANAGEMENT
+// ============================================
+
+// ROUTE 6: Register a new company
+app.post('/api/company/register', (req, res) => {
+  const { name, email, phone, website, trade } = req.body;
+  
+  const companyId = `company_${uuidv4()}`;
+  const apiKey = `rva_${uuidv4()}`;
+  
+  const company = {
+    id: companyId,
+    apiKey: apiKey,
+    name,
+    email,
+    phone,
+    website,
+    trade,
+    commissionRate: 0.02, // 2%
+    status: 'trial', // trial, active, paused
+    createdAt: new Date().toISOString(),
+    trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString() // 14 days
+  };
+  
+  companies.set(companyId, company);
+  
+  res.json({
+    success: true,
+    companyId: companyId,
+    apiKey: apiKey,
+    message: 'Company registered successfully'
+  });
+});
+
+// ROUTE 7: Capture lead from widget
+app.post('/api/lead', async (req, res) => {
+  try {
+    const {
+      companyId,
+      customerName,
+      email,
+      phone,
+      postcode,
+      projectBudget,
+      startDate,
+      notes,
+      originalImage,
+      generatedImage,
+      prompt
+    } = req.body;
+
+    // Validate required fields
+    if (!companyId || !customerName || !email || !phone) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Create lead
+    const lead = {
+      id: uuidv4(),
+      companyId,
+      customerName,
+      email,
+      phone,
+      postcode,
+      projectBudget,
+      startDate,
+      notes,
+      originalImage,
+      generatedImage,
+      prompt,
+      status: 'new', // new, contacted, quoted, won, lost
+      projectValue: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    leads.push(lead);
+
+    // TODO: Send email notification to company
+    console.log(`📧 New lead for company ${companyId}: ${customerName} (${email})`);
+
+    res.json({
+      success: true,
+      leadId: lead.id,
+      message: 'Lead captured successfully'
+    });
+
+  } catch (error) {
+    console.error('Lead capture error:', error);
+    res.status(500).json({ error: 'Failed to capture lead' });
+  }
+});
+
+// ROUTE 8: Get leads for a company
+app.get('/api/company/:companyId/leads', (req, res) => {
+  const { companyId } = req.params;
+  const { status } = req.query;
+
+  let companyLeads = leads.filter(lead => lead.companyId === companyId);
+
+  if (status) {
+    companyLeads = companyLeads.filter(lead => lead.status === status);
+  }
+
+  // Sort by date (newest first)
+  companyLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  res.json({
+    success: true,
+    leads: companyLeads,
+    total: companyLeads.length
+  });
+});
+
+// ROUTE 9: Update lead status
+app.put('/api/lead/:leadId', (req, res) => {
+  const { leadId } = req.params;
+  const { status, projectValue } = req.body;
+
+  const lead = leads.find(l => l.id === leadId);
+
+  if (!lead) {
+    return res.status(404).json({ error: 'Lead not found' });
+  }
+
+  if (status) {
+    lead.status = status;
+  }
+
+  if (projectValue) {
+    lead.projectValue = projectValue;
+    if (status === 'won') {
+      lead.wonDate = new Date().toISOString();
+    }
+  }
+
+  lead.updatedAt = new Date().toISOString();
+
+  res.json({
+    success: true,
+    lead: lead
+  });
+});
+
+// ROUTE 10: Get company dashboard stats
+app.get('/api/company/:companyId/stats', (req, res) => {
+  const { companyId } = req.params;
+  const { month } = req.query; // Format: YYYY-MM
+
+  let companyLeads = leads.filter(lead => lead.companyId === companyId);
+
+  if (month) {
+    companyLeads = companyLeads.filter(lead => 
+      lead.createdAt.startsWith(month)
+    );
+  }
+
+  const totalLeads = companyLeads.length;
+  const wonLeads = companyLeads.filter(l => l.status === 'won');
+  const totalRevenue = wonLeads.reduce((sum, lead) => sum + (lead.projectValue || 0), 0);
+  
+  const company = companies.get(companyId);
+  const commissionRate = company?.commissionRate || 0.02;
+  const commissionAmount = totalRevenue * commissionRate;
+
+  const conversionRate = totalLeads > 0 ? (wonLeads.length / totalLeads * 100).toFixed(1) : 0;
+
+  res.json({
+    success: true,
+    stats: {
+      totalLeads,
+      newLeads: companyLeads.filter(l => l.status === 'new').length,
+      quotedLeads: companyLeads.filter(l => l.status === 'quoted').length,
+      wonLeads: wonLeads.length,
+      lostLeads: companyLeads.filter(l => l.status === 'lost').length,
+      totalRevenue,
+      commissionAmount,
+      conversionRate,
+      averageProjectValue: wonLeads.length > 0 ? (totalRevenue / wonLeads.length).toFixed(2) : 0
+    }
+  });
+});
+
+// ROUTE 11: Get company details
+app.get('/api/company/:companyId', (req, res) => {
+  const { companyId } = req.params;
+  const company = companies.get(companyId);
+
+  if (!company) {
+    return res.status(404).json({ error: 'Company not found' });
+  }
+
+  res.json({
+    success: true,
+    company: company
+  });
+});
+
+// ROUTE 12: Get embed code for company
+app.get('/api/company/:companyId/embed', (req, res) => {
+  const { companyId } = req.params;
+  
+  const embedCode = `<!-- Renovation Vision Widget -->
+<div id="renovation-vision-widget"></div>
+<script>
+  window.RENOVATION_VISION_COMPANY_ID = '${companyId}';
+</script>
+<script src="https://yourdomain.com/widget/embed.js"></script>
+<!-- End Renovation Vision Widget -->`;
+
+  res.json({
+    success: true,
+    embedCode: embedCode
+  });
+});
+
+// ============================================
+// AUTHENTICATION & REGISTRATION
+// ============================================
+
+// Simple password hashing (in production, use bcrypt!)
+function hashPassword(password) {
+  return Buffer.from(password).toString('base64');
+}
+
+function verifyPassword(password, hash) {
+  return hashPassword(password) === hash;
+}
+
+// ROUTE: Company Registration (Sign Up)
+app.post('/api/auth/register', (req, res) => {
+  const { name, email, password, phone, website, trade } = req.body;
+
+  // Validate required fields
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Name, email, and password are required' });
+  }
+
+  // Check if email already exists
+  const existingCompany = Array.from(companies.values()).find(c => c.email === email);
+  if (existingCompany) {
+    return res.status(400).json({ error: 'Email already registered' });
+  }
+
+  // Create company
+  const companyId = `company_${uuidv4()}`;
+  const apiKey = `rva_${uuidv4()}`;
+
+  const company = {
+    id: companyId,
+    apiKey: apiKey,
+    name,
+    email,
+    password: hashPassword(password), // In production, use bcrypt!
+    phone: phone || '',
+    website: website || '',
+    trade: trade || 'general',
+    commissionRate: 0.02, // 2%
+    status: 'trial',
+    createdAt: new Date().toISOString(),
+    trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+  };
+
+  companies.set(companyId, company);
+
+  console.log(`✅ New company registered: ${name} (${companyId})`);
+
+  res.json({
+    success: true,
+    companyId: companyId,
+    apiKey: apiKey,
+    message: 'Company registered successfully',
+    company: {
+      id: company.id,
+      name: company.name,
+      email: company.email,
+      trade: company.trade,
+      status: company.status
+    }
+  });
+});
+
+// ROUTE: Company Login
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  // Find company by email
+  const company = Array.from(companies.values()).find(c => c.email === email);
+
+  if (!company) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  // Verify password
+  if (!verifyPassword(password, company.password)) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  console.log(`✅ Company logged in: ${company.name} (${company.id})`);
+
+  res.json({
+    success: true,
+    companyId: company.id,
+    company: {
+      id: company.id,
+      name: company.name,
+      email: company.email,
+      trade: company.trade,
+      status: company.status,
+      apiKey: company.apiKey
+    }
+  });
+});
+
+// ROUTE: Create demo company (for testing)
+app.post('/api/demo/create', (req, res) => {
+  const demoCompanyId = 'demo_company';
+  
+  if (!companies.has(demoCompanyId)) {
+    const demoCompany = {
+      id: demoCompanyId,
+      apiKey: 'rva_demo_key',
+      name: 'Demo Bathrooms Ltd',
+      email: 'demo@example.com',
+      password: hashPassword('demo123'),
+      phone: '07700 900123',
+      website: 'www.demobathrooms.com',
+      trade: 'bathroom',
+      commissionRate: 0.02,
+      status: 'trial',
+      createdAt: new Date().toISOString(),
+      trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    
+    companies.set(demoCompanyId, demoCompany);
+    
+    // Create some demo leads
+    for (let i = 1; i <= 10; i++) {
+      leads.push({
+        id: `demo_lead_${i}`,
+        companyId: demoCompanyId,
+        customerName: `Customer ${i}`,
+        email: `customer${i}@email.com`,
+        phone: `07700 90${String(i).padStart(4, '0')}`,
+        postcode: `SW1A ${i}AA`,
+        projectBudget: ['under-5k', '5k-10k', '10k-20k', '20k-plus'][i % 4],
+        startDate: ['asap', '1-3months', '3-6months'][i % 3],
+        notes: 'Looking for a complete renovation',
+        originalImage: 'https://via.placeholder.com/400x300?text=Before',
+        generatedImage: 'https://via.placeholder.com/400x300?text=After',
+        prompt: 'Modern bathroom with marble tiles',
+        status: ['new', 'contacted', 'quoted', 'won', 'lost'][i % 5],
+        projectValue: i % 5 === 3 ? 12000 + (i * 1000) : null,
+        createdAt: new Date(Date.now() - (i * 24 * 60 * 60 * 1000)).toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+  
+  res.json({
+    success: true,
+    message: 'Demo company created',
+    login: {
+      email: 'demo@example.com',
+      password: 'demo123'
+    }
+  });
 });
 
 // Start server

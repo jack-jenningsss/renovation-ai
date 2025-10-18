@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Renovation Vision</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h2>🏠 Renovation Vision</h2>
+            </div>
+            <nav class="nav-menu">
+                <a href="index.html" class="nav-item active">
+                    📊 Dashboard
+                </a>
+                <a href="leads.html" class="nav-item">
+                    👥 Leads
+                </a>
+                <a href="analytics.html" class="nav-item">
+                    📈 Analytics
+                </a>
+                <a href="#" class="nav-item">
+                    ⚙️ Settings
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <p><strong id="companyName">Loading...</strong></p>
+                <p class="text-small" id="planStatus">Trial • 14 days left</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header">
+                <h1>Dashboard</h1>
+                <div class="header-actions">
+                    <select id="monthFilter" class="filter-select">
+                        <option value="">This Month</option>
+                        <option value="last-month">Last Month</option>
+                        <option value="last-3-months">Last 3 Months</option>
+                        <option value="all-time">All Time</option>
+                    </select>
+                </div>
+            </header>
+
+            <!-- Stats Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📧</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Total Leads</p>
+                        <h2 class="stat-value" id="totalLeads">--</h2>
+                        <p class="stat-change positive">+12% from last month</p>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Projects Won</p>
+                        <h2 class="stat-value" id="wonLeads">--</h2>
+                        <p class="stat-change positive" id="conversionRate">--% conversion</p>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">💰</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Revenue Tracked</p>
+                        <h2 class="stat-value" id="totalRevenue">£--</h2>
+                        <p class="stat-change positive">+£8,500 from last month</p>
+                    </div>
+                </div>
+
+                <div class="stat-card highlight">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Your Commission</p>
+                        <h2 class="stat-value" id="commission">£--</h2>
+                        <p class="stat-change">2% of tracked revenue</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Leads -->
+            <div class="section">
+                <div class="section-header">
+                    <h2>Recent Leads</h2>
+                    <a href="leads.html" class="link-button">View All →</a>
+                </div>
+
+                <div class="leads-list" id="recentLeads">
+                    <div class="loading">Loading leads...</div>
+                </div>
+            </div>
+
+            <!-- Embed Code -->
+            <div class="section">
+                <div class="section-header">
+                    <h2>🔗 Widget Embed Code</h2>
+                </div>
+                <div class="embed-box">
+                    <p class="text-small">Add this code to your website to display the visualization widget:</p>
+                    <pre id="embedCode" class="code-block">Loading...</pre>
+                    <button class="btn-secondary" onclick="copyEmbedCode()">📋 Copy Code</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="dashboard.js"></script>
+    <script>
+        // Set company ID (in production, get from login session)
+        // Check if logged in
+        const companyId = sessionStorage.getItem('companyId');
+        if (!companyId) {
+            window.location.href = 'login.html';
+        }
+        window.COMPANY_ID = companyId;
+
+        // Update company name
+        const companyName = sessionStorage.getItem('companyName');
+        if (companyName) {
+            document.getElementById('companyName').textContent = companyName;
+        }
+
+        window.API_URL = 'http://localhost:3000';
+        
+        // Initialize dashboard
+        loadDashboard();
+    </script>
+</body>
+</html>
