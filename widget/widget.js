@@ -11,7 +11,9 @@ const loading = document.getElementById('loading');
 const results = document.getElementById('results');
 const beforeImg = document.getElementById('beforeImg');
 const afterImg = document.getElementById('afterImg');
+const blurOverlay = document.getElementById('blurOverlay');
 const leadForm = document.getElementById('leadForm');
+const leadFormContainer = document.getElementById('leadFormContainer');
 const successMessage = document.getElementById('successMessage');
 const finalImg = document.getElementById('finalImg');
 const downloadBtn = document.getElementById('downloadBtn');
@@ -20,12 +22,7 @@ const errorMsg = document.getElementById('errorMsg');
 let uploadedFilename = '';
 let originalImageData = '';
 let generatedImageUrl = '';
-
-// Show steps
-function showStep(stepId) {
-    document.querySelectorAll('.rv-step').forEach(s => s.classList.remove('active'));
-    document.getElementById(stepId).classList.add('active');
-}
+let currentLeadId = '';
 
 // Upload handling
 uploadArea.addEventListener('click', () => fileInput.click());
@@ -33,10 +30,18 @@ uploadArea.addEventListener('click', () => fileInput.click());
 uploadArea.addEventListener('dragover', (e) => {
     e.preventDefault();
     uploadArea.style.borderColor = '#667eea';
+    uploadArea.style.background = '#f0f4ff';
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.style.borderColor = '#ccc';
+    uploadArea.style.background = '#f9f9f9';
 });
 
 uploadArea.addEventListener('drop', (e) => {
     e.preventDefault();
+    uploadArea.style.borderColor = '#ccc';
+    uploadArea.style.background = '#f9f9f9';
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
 });
@@ -52,14 +57,18 @@ async function handleFile(file) {
         return;
     }
 
+    if (file.size > 10 * 1024 * 1024) {
+        showError('Image must be less than 10MB');
+        return;
+    }
+
     // Show preview
     const reader = new FileReader();
     reader.onload = (e) => {
         previewImg.src = e.target.result;
         originalImageData = e.target.result;
         imagePreview.style.display = 'block';
-        showStep('step-style');
-        showStep('step-generate');
+        uploadArea.style.display = 'none';
     };
     reader.readAsDataURL(file);
 
@@ -80,29 +89,35 @@ async function uploadImage(file) {
         const data = await response.json();
         if (data.success) {
             uploadedFilename = data.filename;
-            generateBtn.disabled = false;
+            checkFormComplete();
         }
     } catch (err) {
         showError('Upload failed. Please try again.');
     }
 }
 
-// Load prompts
-async function loadPrompts() {
-    try {
-        const response = await fetch(`${window.API_URL}/api/prompts/general`);
-        const data = await response.json();
-        
-        data.prompts.forEach(prompt => {
-            const option = document.createElement('option');
-            option.value = prompt;
-            option.textContent = prompt.substring(0, 60) + '...';
-            styleSelect.appendChild(option);
-        });
-    } catch (err) {
-        console.error('Failed to load prompts');
-    }
+// Check if form is complete to enable button
+function checkFormComplete() {
+    const hasImage = uploadedFilename !== '';
+    const hasPrompt = styleSelect.value !== '' || customPrompt.value.trim() !== '';
+    
+    generateBtn.disabled = !(hasImage && hasPrompt);
 }
+
+// Listen for prompt changes
+styleSelect.addEventListener('change', () => {
+    if (styleSelect.value) {
+        customPrompt.value = '';
+    }
+    checkFormComplete();
+});
+
+customPrompt.addEventListener('input', () => {
+    if (customPrompt.value.trim()) {
+        styleSelect.value = '';
+    }
+    checkFormComplete();
+});
 
 // Generate button
 generateBtn.addEventListener('click', async () => {
@@ -113,8 +128,14 @@ generateBtn.addEventListener('click', async () => {
         return;
     }
 
+    if (!uploadedFilename) {
+        showError('Please upload an image first');
+        return;
+    }
+
+    // Hide form, show loading
+    document.querySelector('.rv-main-form').style.display = 'none';
     loading.style.display = 'block';
-    results.style.display = 'none';
     errorMsg.style.display = 'none';
 
     try {
@@ -135,14 +156,20 @@ generateBtn.addEventListener('click', async () => {
             beforeImg.src = originalImageData;
             afterImg.src = generatedImageUrl;
             
+            // Keep image blurred
+            afterImg.classList.add('rv-blurred');
+            
             loading.style.display = 'none';
             results.style.display = 'block';
-            results.scrollIntoView({ behavior: 'smooth' });
+            
+            // Scroll to results
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         } else {
-            throw new Error(data.error);
+            throw new Error(data.error || 'Generation failed');
         }
     } catch (err) {
         loading.style.display = 'none';
+        document.querySelector('.rv-main-form').style.display = 'block';
         showError('Generation failed: ' + err.message);
     }
 });
@@ -151,16 +178,16 @@ generateBtn.addEventListener('click', async () => {
 leadForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
+    const unlockBtn = document.getElementById('unlockBtn');
+    unlockBtn.disabled = true;
+    unlockBtn.textContent = '⏳ Unlocking...';
+
     const formData = new FormData(leadForm);
     const leadData = {
         companyId: window.COMPANY_ID,
         customerName: formData.get('name'),
         email: formData.get('email'),
         phone: formData.get('phone'),
-        postcode: formData.get('postcode'),
-        projectBudget: formData.get('budget'),
-        startDate: formData.get('timeline'),
-        notes: formData.get('notes'),
         originalImage: originalImageData,
         generatedImage: generatedImageUrl,
         prompt: customPrompt.value || styleSelect.value
@@ -176,16 +203,32 @@ leadForm.addEventListener('submit', async (e) => {
         const data = await response.json();
 
         if (data.success) {
-            // Unblur and show success
+            currentLeadId = data.leadId;
+            
+            // Unblur image
             afterImg.classList.remove('rv-blurred');
-            finalImg.src = generatedImageUrl;
-            document.querySelector('.rv-lead-form').style.display = 'none';
+            afterImg.classList.add('unblurred');
+            blurOverlay.classList.add('hidden');
+            
+            // Hide form, show success
+            leadFormContainer.style.display = 'none';
             successMessage.style.display = 'block';
+            
+            // Show reference code
+            document.getElementById('referenceCode').textContent = data.referenceCode;
+            
+            // Show full image
+            finalImg.src = generatedImageUrl;
+            
+            // Scroll to top
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         } else {
-            throw new Error(data.error);
+            throw new Error(data.error || 'Submission failed');
         }
     } catch (err) {
-        showError('Failed to submit. Please try again.');
+        showError('Failed to submit. Please try again: ' + err.message);
+        unlockBtn.disabled = false;
+        unlockBtn.textContent = '🔓 Unlock Full Image & Get Free Quote';
     }
 });
 
@@ -193,18 +236,18 @@ leadForm.addEventListener('submit', async (e) => {
 downloadBtn.addEventListener('click', () => {
     const link = document.createElement('a');
     link.href = generatedImageUrl;
-    link.download = `renovation-${Date.now()}.jpg`;
+    link.download = `renovation-${currentLeadId}.jpg`;
     link.click();
 });
 
 function showError(message) {
-    errorMsg.textContent = message;
+    errorMsg.textContent = '⚠️ ' + message;
     errorMsg.style.display = 'block';
+    
     setTimeout(() => {
         errorMsg.style.display = 'none';
     }, 5000);
 }
 
 // Initialize
-loadPrompts();
-showStep('step-upload');
+console.log('Widget loaded, API URL:', window.API_URL);

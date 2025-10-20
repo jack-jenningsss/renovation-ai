@@ -7,9 +7,15 @@ const { TaskFailedError } = require('@runwayml/sdk');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const db = require('./database');
 
 const app = express();
 const PORT = 3000;
+
+const emailAutomation = require('./email-automation');
+
+// Start email automation
+console.log('✅ Email automation started');
 
 // Initialize Runway client
 const client = new RunwayML({
@@ -53,14 +59,22 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// In-memory storage (replace with database in production)
-const companies = new Map();
-const leads = [];
-const projects = [];
-
 // ROUTE 1: Test endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'Server is running!' });
+app.get('/api/health', async (req, res) => {
+  try {
+    const result = await db.query('SELECT NOW()');
+    res.json({ 
+      status: 'Server is running!',
+      database: 'Connected',
+      time: result.rows[0].now
+    });
+  } catch (error) {
+    res.json({ 
+      status: 'Server is running!',
+      database: 'Disconnected',
+      error: error.message
+    });
+  }
 });
 
 // ROUTE 2: Upload image
@@ -94,7 +108,7 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
 // ROUTE 3: Generate renovation image
 app.post('/api/generate', async (req, res) => {
   try {
-    const { filename, prompt } = req.body;
+    const { filename, prompt, companyId } = req.body;
 
     if (!filename || !prompt) {
       return res.status(400).json({ error: 'Missing filename or prompt' });
@@ -135,21 +149,20 @@ app.post('/api/generate', async (req, res) => {
 
     console.log('Generation complete!');
 
-    // Save project
-    const project = {
-      id: uuidv4(),
-      originalImage: filename,
-      prompt: prompt,
-      generatedImage: task.output[0],
-      createdAt: new Date().toISOString()
-    };
-    
-    projects.push(project);
+    const generatedImageUrl = task.output[0];
+    const projectId = uuidv4();
+
+    // Save to database
+    await db.query(
+      `INSERT INTO projects (id, company_id, original_image, generated_image, prompt)
+      VALUES ($1, $2, $3, $4, $5)`,
+      [projectId, companyId || 'demo_company', filename, generatedImageUrl, prompt]
+    );
 
     res.json({
       success: true,
-      generatedImageUrl: task.output[0],
-      projectId: project.id
+      generatedImageUrl: generatedImageUrl,
+      projectId: projectId
     });
 
   } catch (error) {
@@ -170,8 +183,16 @@ app.post('/api/generate', async (req, res) => {
 });
 
 // ROUTE 4: Get all projects
-app.get('/api/projects', (req, res) => {
-  res.json({ projects: projects });
+app.get('/api/projects', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM projects ORDER BY created_at DESC LIMIT 100'
+    );
+    res.json({ projects: result.rows });
+  } catch (error) {
+    console.error('Projects fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch projects' });
+  }
 });
 
 // ROUTE 5: Get prompts by trade
@@ -249,8 +270,7 @@ app.post('/api/company/register', (req, res) => {
     message: 'Company registered successfully'
   });
 });
-
-// ROUTE 7: Capture lead from widget
+// ROUTE 7: Capture lead from widget (DATABASE VERSION)
 app.post('/api/lead', async (req, res) => {
   try {
     const {
@@ -258,10 +278,6 @@ app.post('/api/lead', async (req, res) => {
       customerName,
       email,
       phone,
-      postcode,
-      projectBudget,
-      startDate,
-      notes,
       originalImage,
       generatedImage,
       prompt
@@ -272,34 +288,26 @@ app.post('/api/lead', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Create lead
-    const lead = {
-      id: uuidv4(),
-      companyId,
-      customerName,
-      email,
-      phone,
-      postcode,
-      projectBudget,
-      startDate,
-      notes,
-      originalImage,
-      generatedImage,
-      prompt,
-      status: 'new', // new, contacted, quoted, won, lost
-      projectValue: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    // Generate unique reference code
+    const leadId = uuidv4();
+    const referenceCode = `RV-${leadId.substring(0, 8).toUpperCase()}`;
 
-    leads.push(lead);
+    // Create lead in database
+    await db.query(
+      `INSERT INTO leads (id, company_id, customer_name, email, phone, 
+                          original_image, generated_image, prompt, reference_code, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new')`,
+      [leadId, companyId, customerName, email, phone, originalImage, generatedImage, prompt, referenceCode]
+    );
 
-    // TODO: Send email notification to company
-    console.log(`📧 New lead for company ${companyId}: ${customerName} (${email})`);
+    console.log(`📧 New lead captured: ${customerName} (${email}) - Ref: ${referenceCode}`);
+
+    // TODO: Send emails (we'll add this next)
 
     res.json({
       success: true,
-      leadId: lead.id,
+      leadId: leadId,
+      referenceCode: referenceCode,
       message: 'Lead captured successfully'
     });
 
@@ -498,42 +506,6 @@ app.post('/api/auth/register', (req, res) => {
   });
 });
 
-// ROUTE: Company Login
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-
-  // Find company by email
-  const company = Array.from(companies.values()).find(c => c.email === email);
-
-  if (!company) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
-
-  // Verify password
-  if (!verifyPassword(password, company.password)) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
-
-  console.log(`✅ Company logged in: ${company.name} (${company.id})`);
-
-  res.json({
-    success: true,
-    companyId: company.id,
-    company: {
-      id: company.id,
-      name: company.name,
-      email: company.email,
-      trade: company.trade,
-      status: company.status,
-      apiKey: company.apiKey
-    }
-  });
-});
-
 // ROUTE: Create demo company (for testing)
 app.post('/api/demo/create', (req, res) => {
   const demoCompanyId = 'demo_company';
@@ -589,9 +561,425 @@ app.post('/api/demo/create', (req, res) => {
   });
 });
 
+// ============================================
+// AUTHENTICATION & REGISTRATION
+// ============================================
+
+// Simple password hashing (in production, use bcrypt!)
+function hashPassword(password) {
+  return Buffer.from(password).toString('base64');
+}
+
+function verifyPassword(password, hash) {
+  return hashPassword(password) === hash;
+}
+
+// ROUTE: Company Registration (Sign Up)
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password, phone, website, trade } = req.body;
+
+  // Validate required fields
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Name, email, and password are required' });
+  }
+
+  try {
+    // Check if email already exists
+    const existing = await db.query('SELECT id FROM companies WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    // Create company
+    const companyId = `company_${uuidv4()}`;
+    const apiKey = `rva_${uuidv4()}`;
+
+    await db.query(
+      `INSERT INTO companies (id, api_key, name, email, password, phone, website, trade, status, trial_ends_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'trial', $9)`,
+      [
+        companyId,
+        apiKey,
+        name,
+        email,
+        hashPassword(password),
+        phone || '',
+        website || '',
+        trade || 'general',
+        new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      ]
+    );
+
+    console.log(`✅ New company registered: ${name} (${companyId})`);
+
+    res.json({
+      success: true,
+      companyId: companyId,
+      apiKey: apiKey,
+      message: 'Company registered successfully',
+      company: {
+        id: companyId,
+        name: name,
+        email: email,
+        trade: trade || 'general',
+        status: 'trial'
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// ROUTE: Create demo company (for testing)
+app.post('/api/demo/create', async (req, res) => {
+  const demoCompanyId = 'demo_company';
+  
+  try {
+    // Check if exists
+    const existing = await db.query('SELECT id FROM companies WHERE id = $1', [demoCompanyId]);
+    
+    if (existing.rows.length === 0) {
+      await db.query(
+        `INSERT INTO companies (id, api_key, name, email, password, phone, website, trade, status, trial_ends_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'trial', $9)`,
+        [
+          demoCompanyId,
+          'rva_demo_key',
+          'Demo Bathrooms Ltd',
+          'demo@example.com',
+          hashPassword('demo123'),
+          '07700 900123',
+          'www.demobathrooms.com',
+          'bathroom',
+          new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+        ]
+      );
+      
+      console.log('✅ Demo company created');
+    }
+    
+    res.json({
+      success: true,
+      message: 'Demo company ready',
+      login: {
+        email: 'demo@example.com',
+        password: 'demo123'
+      }
+    });
+  } catch (error) {
+    console.error('Demo creation error:', error);
+    res.status(500).json({ error: 'Failed to create demo company' });
+  }
+});
+
+// Password hashing functions
+function hashPassword(password) {
+  return Buffer.from(password).toString('base64');
+}
+
+function verifyPassword(password, hash) {
+  return hashPassword(password) === hash;
+}
+
+// ROUTE: Company Login
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  console.log('Login attempt:', email); // This should show in terminal
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    const result = await db.query('SELECT * FROM companies WHERE email = $1', [email]);
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const company = result.rows[0];
+
+    if (!verifyPassword(password, company.password)) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    console.log(`✅ Company logged in: ${company.name}`);
+
+    res.json({
+      success: true,
+      companyId: company.id,
+      company: {
+        id: company.id,
+        name: company.name,
+        email: company.email,
+        trade: company.trade,
+        status: company.status
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed', message: error.message });
+  }
+});
+
+// ============================================
+// AUTHENTICATION & COMPANY MANAGEMENT
+// ============================================
+
+// Password hashing functions
+function hashPassword(password) {
+  return Buffer.from(password).toString('base64');
+}
+
+function verifyPassword(password, hash) {
+  return hashPassword(password) === hash;
+}
+
+// ROUTE: Create demo company
+app.post('/api/demo/create', async (req, res) => {
+  const demoCompanyId = 'demo_company';
+  
+  try {
+    // Check if exists
+    const existing = await db.query('SELECT id FROM companies WHERE id = $1', [demoCompanyId]);
+    
+    if (existing.rows.length === 0) {
+      await db.query(
+        `INSERT INTO companies (id, api_key, name, email, password, phone, website, trade, status, trial_ends_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'trial', $9)`,
+        [
+          demoCompanyId,
+          'rva_demo_key',
+          'Demo Bathrooms Ltd',
+          'demo@example.com',
+          hashPassword('demo123'),
+          '07700 900123',
+          'www.demobathrooms.com',
+          'bathroom',
+          new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+        ]
+      );
+      
+      console.log('✅ Demo company created');
+    } else {
+      console.log('✅ Demo company already exists');
+    }
+    
+    res.json({
+      success: true,
+      message: 'Demo company ready',
+      login: {
+        email: 'demo@example.com',
+        password: 'demo123'
+      }
+    });
+  } catch (error) {
+    console.error('Demo creation error:', error);
+    res.status(500).json({ error: 'Failed to create demo company', message: error.message });
+  }
+});
+
+// ROUTE: Company Login
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  console.log('Login attempt for:', email);
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    // Find company by email
+    const result = await db.query('SELECT * FROM companies WHERE email = $1', [email]);
+
+    if (result.rows.length === 0) {
+      console.log('❌ Email not found:', email);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const company = result.rows[0];
+
+    // Verify password
+    if (!verifyPassword(password, company.password)) {
+      console.log('❌ Invalid password for:', email);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    console.log(`✅ Company logged in: ${company.name} (${company.id})`);
+
+    res.json({
+      success: true,
+      companyId: company.id,
+      company: {
+        id: company.id,
+        name: company.name,
+        email: company.email,
+        trade: company.trade,
+        status: company.status,
+        apiKey: company.api_key
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed', message: error.message });
+  }
+});
+
+// ROUTE: Company Registration
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password, phone, website, trade } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Name, email, and password are required' });
+  }
+
+  try {
+    // Check if email exists
+    const existing = await db.query('SELECT id FROM companies WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    // Create company
+    const companyId = `company_${uuidv4()}`;
+    const apiKey = `rva_${uuidv4()}`;
+
+    await db.query(
+      `INSERT INTO companies (id, api_key, name, email, password, phone, website, trade, status, trial_ends_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'trial', $9)`,
+      [
+        companyId,
+        apiKey,
+        name,
+        email,
+        hashPassword(password),
+        phone || '',
+        website || '',
+        trade || 'general',
+        new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      ]
+    );
+
+    console.log(`✅ New company registered: ${name} (${companyId})`);
+
+    res.json({
+      success: true,
+      companyId: companyId,
+      apiKey: apiKey,
+      message: 'Company registered successfully',
+      company: {
+        id: companyId,
+        name: name,
+        email: email,
+        trade: trade || 'general',
+        status: 'trial'
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed', message: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`✅ Runway API key configured: ${process.env.RUNWAYML_API_KEY ? 'Yes' : 'No'}`);
   console.log(`✅ Test the API: http://localhost:${PORT}/api/health`);
 });
+
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Send confirmation email to customer
+async function sendCustomerEmail(name, email, referenceCode, imageUrl) {
+  const msg = {
+    to: email,
+    from: 'hello@renovationvision.io', // Use your verified sender
+    subject: 'Your Dream Renovation Visualization',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #667eea;">🏠 Your Visualization is Ready!</h2>
+        
+        <p>Hi ${name},</p>
+        
+        <p>Thank you for using our AI visualization tool! Your dream renovation is one step closer to reality.</p>
+        
+        <div style="background: #f0f4ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top: 0;">Your Reference Code:</h3>
+          <h1 style="color: #667eea; font-size: 32px; letter-spacing: 2px; margin: 10px 0;">${referenceCode}</h1>
+          <p style="font-size: 14px; color: #666;">Mention this code when you call for priority service!</p>
+        </div>
+        
+        <img src="${imageUrl}" alt="Your renovation" style="max-width: 100%; border-radius: 8px; margin: 20px 0;">
+        
+        <h3>What happens next?</h3>
+        <ul>
+          <li>We'll contact you within 24 hours</li>
+          <li>Get a free, no-obligation quote</li>
+          <li>Discuss your vision with our experts</li>
+        </ul>
+        
+        <p style="color: #999; font-size: 14px; margin-top: 40px;">
+          You're receiving this email because you used our renovation visualization tool.
+        </p>
+      </div>
+    `
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Customer email sent to ${email}`);
+  } catch (error) {
+    console.error('Email send error:', error);
+  }
+}
+
+// Send notification to company
+async function sendCompanyNotification(companyId, customerName, email, phone, referenceCode) {
+  const company = await db.query('SELECT name, email FROM companies WHERE id = $1', [companyId]);
+  
+  if (company.rows.length === 0) return;
+
+  const companyEmail = company.rows[0].email;
+  const companyName = company.rows[0].name;
+
+  const msg = {
+    to: companyEmail,
+    from: 'leads@renovationvision.io',
+    subject: `🔥 New Lead Alert - ${customerName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #667eea;">New Lead from AI Tool!</h2>
+        
+        <p>Hi ${companyName},</p>
+        
+        <p>You have a new lead from your Renovation Vision widget:</p>
+        
+        <div style="background: #f9f9f9; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <h3>Lead Details:</h3>
+          <p><strong>Name:</strong> ${customerName}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Phone:</strong> ${phone}</p>
+          <p><strong>Reference Code:</strong> ${referenceCode}</p>
+        </div>
+        
+        <p><a href="https://app.renovationvision.io/dashboard/leads.html" style="background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View in Dashboard</a></p>
+        
+        <p style="margin-top: 30px; color: #666; font-size: 14px;">
+          <strong>💡 Pro Tip:</strong> Leads who use the visualization tool are 3x more likely to close. Contact them within 24 hours for best results!
+        </p>
+      </div>
+    `
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Company notification sent to ${companyEmail}`);
+  } catch (error) {
+    console.error('Email send error:', error);
+  }
+}
