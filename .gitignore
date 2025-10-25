@@ -1,4 +1,30 @@
-node_modules/ 
-.env 
-backend/uploads/* 
-!backend/uploads/.gitkeep 
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables - NEVER COMMIT THESE!
+.env
+*.env
+.env.*
+
+# Build outputs
+dist/
+build/
+desktop-app/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Uploads (user images)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# IDE
+.vscode/
+.idea/
