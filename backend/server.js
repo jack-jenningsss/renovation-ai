@@ -9,6 +9,11 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./database');
 
+// In-memory storage for lightweight demo/testing usage
+// In production these should be persisted in the database (the app also uses the DB in many routes)
+const companies = new Map();
+const leads = [];
+
 const app = express();
 const PORT = 3000;
 
@@ -507,7 +512,7 @@ app.post('/api/auth/register', (req, res) => {
 });
 
 // ROUTE: Create demo company (for testing)
-app.post('/api/demo/create', (req, res) => {
+app.get('/api/demo/create', (req, res) => {
   const demoCompanyId = 'demo_company';
   
   if (!companies.has(demoCompanyId)) {
@@ -559,6 +564,12 @@ app.post('/api/demo/create', (req, res) => {
       password: 'demo123'
     }
   });
+});
+
+// Alias for legacy/alternate route: support /api/create/demo -> /api/demo/create
+app.get('/api/create/demo', (req, res) => {
+  // Redirect to the canonical demo creation endpoint
+  res.redirect('/api/demo/create');
 });
 
 // ============================================
