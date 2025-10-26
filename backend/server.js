@@ -9,6 +9,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./database');
 
+
 // In-memory storage for lightweight demo/testing usage
 // In production these should be persisted in the database (the app also uses the DB in many routes)
 const companies = new Map();
@@ -40,7 +41,8 @@ app.use('/', express.static(path.join(__dirname, '../landing-page'))); // Root =
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Serve static files from parent directory
-app.use(express.static(path.join(__dirname, '..')));
+app.use(express.static(path.join(__dirname, '../frontend')));
+
 
 // Serve uploads folder
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -206,6 +208,10 @@ app.get('/api/projects', async (req, res) => {
     console.error('Projects fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch projects' });
   }
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/dashboard/index.html'));
 });
 
 // ROUTE 5: Get prompts by trade
