@@ -31,9 +31,6 @@ const client = new RunwayML({
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Serve static files for production
-const path = require('path'); // Add at top if not already there
-
 app.use('/dashboard', express.static(path.join(__dirname, '../dashboard')));
 app.use('/widget', express.static(path.join(__dirname, '../widget')));
 app.use('/landing-page', express.static(path.join(__dirname, '../landing-page')));
