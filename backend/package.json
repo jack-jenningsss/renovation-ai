@@ -6,7 +6,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@runwayml/sdk": "^0.11.0",
+    "@runwayml/sdk": "^3.5.0",
     "@sendgrid/mail": "^7.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
