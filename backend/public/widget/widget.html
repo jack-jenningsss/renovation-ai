@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Renovation Visualizer</title>
+    <link rel="stylesheet" href="widget.css">
+</head>
+<body>
+    <div class="rv-widget-container">
+        <!-- Header -->
+        <div class="rv-header">
+            <h2>✨ Visualize Your Dream Space</h2>
+            <p>See what your renovation could look like - instantly!</p>
+        </div>
+
+        <!-- All Steps Visible at Once -->
+        <div class="rv-main-form">
+            
+            <!-- Step 1: Upload (Always Visible) -->
+            <div class="rv-section">
+                <h3>📸 Upload Your Photo</h3>
+                <div class="rv-upload-area" id="uploadArea">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                    </svg>
+                    <p style="font-size: 16px; margin: 10px 0;">Drag & drop or click to browse</p>
+                    <input type="file" id="fileInput" accept="image/*" style="display: none;">
+                </div>
+                <div id="imagePreview" style="display: none; margin-top: 15px;">
+                    <img id="previewImg" alt="Preview" style="max-width: 100%; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                </div>
+            </div>
+
+            <!-- Step 2: Choose Style (Always Visible) -->
+            <div class="rv-section">
+                <h3>🎨 Choose Your Style</h3>
+                <select id="styleSelect" class="rv-select">
+                    <option value="">-- Select a renovation style --</option>
+                    <option value="transformed into a modern luxury bathroom with walk-in rainfall shower, marble tiles, and brushed brass fixtures">Modern Luxury Bathroom</option>
+                    <option value="transformed into a contemporary bathroom with freestanding bathtub, natural stone, and minimalist design">Contemporary Bathroom</option>
+                    <option value="transformed into a spa-style bathroom with wood accents, pebble flooring, and ambient lighting">Spa-Style Bathroom</option>
+                    <option value="transformed into a modern kitchen with white shaker cabinets, quartz waterfall island, and stainless steel appliances">Modern Kitchen</option>
+                    <option value="transformed into an industrial-style kitchen with exposed brick, dark cabinets, and concrete countertops">Industrial Kitchen</option>
+                    <option value="transformed into a Scandinavian minimalist kitchen with light wood, white surfaces, and clean lines">Scandinavian Kitchen</option>
+                    <option value="with new slate roof tiles and copper flashing, architectural exterior">Slate Roof with Copper</option>
+                    <option value="with modern standing seam metal roof, contemporary design">Modern Metal Roof</option>
+                    <option value="transformed into an open-plan living space with exposed beams and modern finishes">Open-Plan Living Space</option>
+                    <option value="with extension featuring bi-fold doors and natural light">Extension with Bi-Fold Doors</option>
+                </select>
+                
+                <p class="rv-or">OR</p>
+                
+                <input type="text" id="customPrompt" class="rv-input" placeholder="Describe your vision (e.g., modern white kitchen with marble countertops)">
+            </div>
+
+            <!-- Step 3: Generate Button (Always Visible) -->
+            <div class="rv-section">
+                <button id="generateBtn" class="rv-button" disabled>
+                    ✨ Generate My Vision
+                </button>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading" class="rv-loading" style="display: none;">
+            <div class="rv-spinner"></div>
+            <p style="font-size: 18px; color: #667eea; margin-top: 20px;">Creating your vision...</p>
+            <p style="color: #999; font-size: 14px;">This may take 30-60 seconds</p>
+        </div>
+
+        <!-- Results Section (Hidden Until Generated) -->
+        <div id="results" class="rv-results" style="display: none;">
+            <h3 style="text-align: center; color: #333; margin-bottom: 30px;">✨ Here's Your Vision!</h3>
+            
+            <div class="rv-comparison">
+                <div class="rv-comparison-item">
+                    <h4>Before</h4>
+                    <img id="beforeImg" alt="Before">
+                </div>
+                <div class="rv-comparison-item">
+                    <h4>After - Your Dream Space</h4>
+                    <div class="rv-image-wrapper">
+                        <img id="afterImg" alt="After" class="rv-blurred">
+                        <div class="rv-blur-overlay" id="blurOverlay">
+                            <div class="rv-lock-icon">🔒</div>
+                            <p>Enter your details below to unlock</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lead Capture Form -->
+            <div id="leadFormContainer" class="rv-lead-form">
+                <h3>💫 Love What You See?</h3>
+                <p>Get your free quote and full high-resolution image!</p>
+                
+                <form id="leadForm">
+                    <div class="rv-form-grid">
+                        <input type="text" name="name" placeholder="Your Name *" required class="rv-input">
+                        <input type="email" name="email" placeholder="Email Address *" required class="rv-input">
+                        <input type="tel" name="phone" placeholder="Phone Number *" required class="rv-input">
+                    </div>
+                    
+                    <p class="rv-privacy-text">
+                        By submitting, you agree to be contacted about your renovation project.
+                    </p>
+                    
+                    <button type="submit" class="rv-button" id="unlockBtn">
+                        🔓 Unlock Full Image & Get Free Quote
+                    </button>
+                </form>
+            </div>
+
+            <!-- Success Message -->
+            <div id="successMessage" class="rv-success-message" style="display: none;">
+                <div class="rv-success-icon">✅</div>
+                <h3>Thank You!</h3>
+                <p>Your quote request has been sent. We'll contact you within 24 hours!</p>
+                <div class="rv-reference-code">
+                    <p style="margin: 0 0 10px 0; color: #666;">Your Reference Code:</p>
+                    <h2 id="referenceCode" style="margin: 0;">RV-12345</h2>
+                    <p class="rv-small" style="margin: 10px 0 0 0;">Mention this code when you call for priority service!</p>
+                </div>
+                <img id="finalImg" alt="Your Vision" style="margin: 20px 0; max-width: 100%; border-radius: 8px;">
+                <button id="downloadBtn" class="rv-button-secondary">📥 Download Full Image</button>
+            </div>
+        </div>
+
+        <!-- Error Message -->
+        <div id="errorMsg" class="rv-error" style="display: none;"></div>
+    </div>
+
+    <script>
+        window.COMPANY_ID = window.RENOVATION_VISION_COMPANY_ID || 'demo_company';
+        window.API_URL = 'http://localhost:3000';
+    </script>
+    <script src="widget.js"></script>
+</body>
+</html>

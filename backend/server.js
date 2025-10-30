@@ -32,17 +32,23 @@ const client = new RunwayML({
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-app.use('/dashboard', express.static(path.join(__dirname, '../dashboard')));
-app.use('/widget', express.static(path.join(__dirname, '../widget')));
-app.use('/landing-page', express.static(path.join(__dirname, '../landing-page')));
-app.use('/', express.static(path.join(__dirname, '../landing-page'))); // Root = landing page
+// Create public directory if it doesn't exist
+const publicDir = path.join(__dirname, 'public');
+if (!fs.existsSync(publicDir)) {
+  fs.mkdirSync(publicDir);
+  ['dashboard', 'widget', 'landing-page'].forEach(dir => {
+    const dirPath = path.join(publicDir, dir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath);
+    }
+  });
+}
 
-// Serve uploads folder
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Serve static files from parent directory
-app.use(express.static(path.join(__dirname, '../frontend')));
-
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/dashboard', express.static(path.join(__dirname, 'public/dashboard')));
+app.use('/widget', express.static(path.join(__dirname, 'public/widget')));
+app.use('/landing-page', express.static(path.join(__dirname, 'public/landing-page')));
 
 // Serve uploads folder
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -210,9 +216,7 @@ app.get('/api/projects', async (req, res) => {
   }
 });
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/dashboard/index.html'));
-});
+// Remove this as we'll place it at the end of the file
 
 // ROUTE 5: Get prompts by trade
 app.get('/api/prompts/:trade', (req, res) => {
@@ -907,6 +911,20 @@ app.post('/api/auth/register', async (req, res) => {
     console.error('Registration error:', error);
     res.status(500).json({ error: 'Registration failed', message: error.message });
   }
+});
+
+// Catch-all route - must be last
+app.get('*', (req, res) => {
+  // If requesting the root, redirect to login
+  if (req.path === '/') {
+    return res.redirect('/dashboard/login.html');
+  }
+  // For dashboard routes, serve the dashboard index
+  if (req.path.startsWith('/dashboard')) {
+    return res.sendFile(path.join(__dirname, 'public/dashboard/index.html'));
+  }
+  // 404 for everything else
+  res.status(404).send('Not Found');
 });
 
 // Start server

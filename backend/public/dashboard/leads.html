@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leads - Renovation Vision</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h2>🏠 Renovation Vision</h2>
+            </div>
+            <nav class="nav-menu">
+                <a href="index.html" class="nav-item">
+                    📊 Dashboard
+                </a>
+                <a href="leads.html" class="nav-item active">
+                    👥 Leads
+                </a>
+                <a href="analytics.html" class="nav-item">
+                    📈 Analytics
+                </a>
+                <a href="#" class="nav-item">
+                    ⚙️ Settings
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <p><strong id="companyName">Loading...</strong></p>
+                <p class="text-small">Trial • 14 days left</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header">
+                <h1>All Leads</h1>
+                <div class="header-actions">
+                    <select id="statusFilter" class="filter-select">
+                        <option value="">All Status</option>
+                        <option value="new">New</option>
+                        <option value="contacted">Contacted</option>
+                        <option value="quoted">Quoted</option>
+                        <option value="won">Won</option>
+                        <option value="lost">Lost</option>
+                    </select>
+                    <button class="btn-primary" onclick="exportLeads()">📥 Export CSV</button>
+                </div>
+            </header>
+
+            <!-- Stats Summary -->
+            <div class="stats-grid" style="margin-bottom: 30px;">
+                <div class="stat-card-small">
+                    <h3 id="newCount">0</h3>
+                    <p>New</p>
+                </div>
+                <div class="stat-card-small">
+                    <h3 id="contactedCount">0</h3>
+                    <p>Contacted</p>
+                </div>
+                <div class="stat-card-small">
+                    <h3 id="quotedCount">0</h3>
+                    <p>Quoted</p>
+                </div>
+                <div class="stat-card-small">
+                    <h3 id="wonCount">0</h3>
+                    <p>Won</p>
+                </div>
+            </div>
+
+            <!-- Leads List -->
+            <div class="section">
+                <div id="leadsList" class="leads-list">
+                    <div class="loading">Loading leads...</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Lead Detail Modal -->
+    <div id="leadModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeLeadModal()">&times;</span>
+            <h2>Lead Details</h2>
+            
+            <div id="leadDetails">
+                <!-- Will be filled by JS -->
+            </div>
+
+            <div class="modal-actions">
+                <h3>Update Lead Status</h3>
+                <div class="status-buttons">
+                    <button onclick="updateLeadStatus('contacted')" class="btn-status">📞 Contacted</button>
+                    <button onclick="updateLeadStatus('quoted')" class="btn-status">💰 Quoted</button>
+                    <button onclick="updateLeadStatus('won')" class="btn-status">✅ Won</button>
+                    <button onclick="updateLeadStatus('lost')" class="btn-status">❌ Lost</button>
+                </div>
+
+                <div id="projectValueSection" style="display: none; margin-top: 20px;">
+                    <label>Project Value (£)</label>
+                    <input type="number" id="projectValue" placeholder="25000" class="modal-input">
+                    <button onclick="saveProjectValue()" class="btn-primary">Save Value</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .stat-card-small {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-card-small h3 {
+            font-size: 32px;
+            margin-bottom: 5px;
+            color: #667eea;
+        }
+
+        .stat-card-small p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 15px;
+        }
+
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 32px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .modal-close:hover {
+            color: #333;
+        }
+
+        .lead-detail-row {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .lead-detail-row strong {
+            display: block;
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 5px;
+        }
+
+        .lead-images {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .lead-images img {
+            width: 100%;
+            border-radius: 8px;
+        }
+
+        .status-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .btn-status {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-status:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            margin: 10px 0;
+        }
+    </style>
+
+    <script src="dashboard.js"></script>
+    <script>
+        // Check if logged in
+        const companyId = sessionStorage.getItem('companyId');
+        if (!companyId) {
+            window.location.href = 'login.html';
+        }
+        window.COMPANY_ID = companyId;
+
+        // Update company name
+        const companyName = sessionStorage.getItem('companyName');
+        if (companyName) {
+            document.getElementById('companyName').textContent = companyName;
+        }
+        window.API_URL = 'http://localhost:3000';
+        
+        let currentLeadId = null;
+        let allLeads = [];
+
+        // Load all leads
+        async function loadLeads() {
+            try {
+                const response = await fetch(`${window.API_URL}/api/company/${window.COMPANY_ID}/leads`);
+                const data = await response.json();
+
+                if (data.success) {
+                    allLeads = data.leads;
+                    displayLeads(allLeads);
+                    updateStatusCounts(allLeads);
+                }
+            } catch (error) {
+                console.error('Failed to load leads:', error);
+            }
+        }
+
+        function displayLeads(leads) {
+            const container = document.getElementById('leadsList');
+
+            if (leads.length === 0) {
+                container.innerHTML = '<div class="loading">No leads found</div>';
+                return;
+            }
+
+            container.innerHTML = leads.map(lead => `
+                <div class="lead-card" onclick="openLeadModal('${lead.id}')">
+                    <div class="lead-info">
+                        <h3>${lead.customerName}</h3>
+                        <div class="lead-meta">
+                            <span>📧 ${lead.email}</span>
+                            <span>📞 ${lead.phone}</span>
+                            <span>📍 ${lead.postcode}</span>
+                        </div>
+                        <span class="lead-budget">${lead.projectBudget}</span>
+                        ${lead.notes ? `<p style="margin-top: 10px; font-size: 14px; color: #666;">${lead.notes}</p>` : ''}
+                        <p class="text-small" style="margin-top: 10px; color: #999;">
+                            ${new Date(lead.createdAt).toLocaleDateString('en-GB', { 
+                                day: 'numeric', 
+                                month: 'short', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}
+                        </p>
+                    </div>
+                    <div class="lead-actions">
+                        <span class="status-badge status-${lead.status}">${lead.status.toUpperCase()}</span>
+                        ${lead.projectValue ? `<p style="margin-top: 10px; font-weight: 600;">£${lead.projectValue.toLocaleString()}</p>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateStatusCounts(leads) {
+            document.getElementById('newCount').textContent = leads.filter(l => l.status === 'new').length;
+            document.getElementById('contactedCount').textContent = leads.filter(l => l.status === 'contacted').length;
+            document.getElementById('quotedCount').textContent = leads.filter(l => l.status === 'quoted').length;
+            document.getElementById('wonCount').textContent = leads.filter(l => l.status === 'won').length;
+        }
+
+        // Filter leads
+        document.getElementById('statusFilter').addEventListener('change', (e) => {
+            const status = e.target.value;
+            const filtered = status ? allLeads.filter(l => l.status === status) : allLeads;
+            displayLeads(filtered);
+        });
+
+        // Open lead modal
+        function openLeadModal(leadId) {
+            currentLeadId = leadId;
+            const lead = allLeads.find(l => l.id === leadId);
+
+            if (!lead) return;
+
+            const details = document.getElementById('leadDetails');
+            details.innerHTML = `
+                <div class="lead-detail-row">
+                    <strong>Customer Name</strong>
+                    <p>${lead.customerName}</p>
+                </div>
+                <div class="lead-detail-row">
+                    <strong>Email</strong>
+                    <p><a href="mailto:${lead.email}">${lead.email}</a></p>
+                </div>
+                <div class="lead-detail-row">
+                    <strong>Phone</strong>
+                    <p><a href="tel:${lead.phone}">${lead.phone}</a></p>
+                </div>
+                <div class="lead-detail-row">
+                    <strong>Postcode</strong>
+                    <p>${lead.postcode}</p>
+                </div>
+                <div class="lead-detail-row">
+                    <strong>Budget</strong>
+                    <p>${lead.projectBudget}</p>
+                </div>
+                <div class="lead-detail-row">
+                    <strong>Start Date</strong>
+                    <p>${lead.startDate}</p>
+                </div>
+                ${lead.notes ? `
+                <div class="lead-detail-row">
+                    <strong>Notes</strong>
+                    <p>${lead.notes}</p>
+                </div>
+                ` : ''}
+                <div class="lead-detail-row">
+                    <strong>Prompt Used</strong>
+                    <p>${lead.prompt}</p>
+                </div>
+                <div class="lead-images">
+                    <div>
+                        <strong>Before</strong>
+                        <img src="${lead.originalImage}" alt="Before">
+                    </div>
+                    <div>
+                        <strong>After</strong>
+                        <img src="${lead.generatedImage}" alt="After">
+                    </div>
+                </div>
+            `;
+
+            if (lead.projectValue) {
+                document.getElementById('projectValue').value = lead.projectValue;
+            }
+
+            document.getElementById('leadModal').style.display = 'flex';
+        }
+
+        function closeLeadModal() {
+            document.getElementById('leadModal').style.display = 'none';
+            currentLeadId = null;
+        }
+
+        async function updateLeadStatus(status) {
+            if (!currentLeadId) return;
+
+            try {
+                const response = await fetch(`${window.API_URL}/api/lead/${currentLeadId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Status updated!');
+                    
+                    if (status === 'won') {
+                        document.getElementById('projectValueSection').style.display = 'block';
+                    } else {
+                        closeLeadModal();
+                        loadLeads();
+                    }
+                }
+            } catch (error) {
+                alert('Failed to update status');
+            }
+        }
+
+        async function saveProjectValue() {
+            const value = parseFloat(document.getElementById('projectValue').value);
+
+            if (!value || value <= 0) {
+                alert('Please enter a valid project value');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${window.API_URL}/api/lead/${currentLeadId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        status: 'won',
+                        projectValue: value 
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Project value saved!');
+                    closeLeadModal();
+                    loadLeads();
+                }
+            } catch (error) {
+                alert('Failed to save project value');
+            }
+        }
+
+        function exportLeads() {
+            let csv = 'Name,Email,Phone,Postcode,Budget,Start Date,Status,Project Value,Created Date\n';
+            
+            allLeads.forEach(lead => {
+                csv += `"${lead.customerName}","${lead.email}","${lead.phone}","${lead.postcode}","${lead.projectBudget}","${lead.startDate}","${lead.status}","${lead.projectValue || ''}","${new Date(lead.createdAt).toLocaleString()}"\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `leads-${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+        }
+
+        // Initialize
+        loadLeads();
+    </script>
+</body>
+</html>
