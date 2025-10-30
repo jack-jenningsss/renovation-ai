@@ -5,7 +5,7 @@
   'use strict';
 
   // Configuration
-  const WIDGET_URL = 'http://localhost:3000/widget/widget.html'; // Change to your production URL
+  const WIDGET_URL = 'https://renovation-ai-production.up.railway.app/widget/widget.html'; // Change to your production URL
   const companyId = window.RENOVATION_VISION_COMPANY_ID;
 
   if (!companyId) {
