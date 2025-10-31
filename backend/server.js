@@ -166,9 +166,9 @@ app.post('/api/generate', async (req, res) => {
           tag: 'original'
         }
       ],
-        referenceImageStrength: 0.7,  // 0.0-1.0, higher = closer to original
+        referenceImageStrength: 1.0,  // 0.0-1.0, higher = closer to original
         seed: 12345,  // for reproducibility
-        creativityStrength: 0.3  // lower = more faithful to prompt & reference
+        creativityStrength: 0.25  // lower = more faithful to prompt & reference
     }).waitForTaskOutput();
 
     console.log('Generation complete!');
