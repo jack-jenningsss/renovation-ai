@@ -157,7 +157,7 @@ app.post('/api/generate', async (req, res) => {
 
     // Call Runway ML API
     const task = await client.textToImage.create({
-      model: 'gen4_turbo',
+      model: 'gen4_image',
       ratio: '1024:1024',
       promptText: `@original ${prompt}`,
       referenceImages: [
