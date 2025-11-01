@@ -23,10 +23,9 @@ const emailAutomation = require('./email-automation');
 // Start email automation
 console.log('✅ Email automation started');
 
-// Initialize Runway client
-const client = new RunwayML({
-  apiKey: process.env.RUNWAYML_API_KEY
-});
+// Initialize Gemini API
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
 
 // Middleware
 app.use(cors());
@@ -153,27 +152,41 @@ app.post('/api/generate', async (req, res) => {
     
     const dataUri = `data:${mimeType};base64,${base64Image}`;
 
-    console.log('Sending request to Runway ML...');
+    console.log('Sending request to Gemini...');
 
-    // Call Runway ML API
-    const task = await client.textToImage.create({
-      model: 'gen4_image',
-      ratio: '1024:1024',
-      promptText: `@original ${prompt}`,
-      referenceImages: [
-        {
-          uri: dataUri,
-          tag: 'original'
-        }
-      ],
-        referenceImageStrength: 0.75,  // 0.0-1.0, higher = closer to original
-        seed: 12345,  // for reproducibility
-        creativityStrength: 0.25  // lower = more faithful to prompt & reference
-    }).waitForTaskOutput();
+    // Prepare image for Gemini
+    const imageObject = {
+      inlineData: {
+        data: base64Image,
+        mimeType: mimeType
+      }
+    };
+
+    // Prepare dynamic prompt with context
+    const enhancedPrompt = {
+      context: `You are an expert architectural visualization AI. You're looking at a photo of a space that needs renovation.
+               Focus on maintaining structural integrity while implementing these changes.
+               Consider lighting, materials, and spatial relationships.`,
+      instruction: `Transform this space according to this specification: ${prompt}
+                   Key requirements:
+                   - Keep structural elements realistic and architecturally sound
+                   - Maintain proper perspective and scale
+                   - Preserve existing lighting conditions while enhancing as needed
+                   - Ensure materials and textures look photorealistic
+                   - Retain room dimensions and key architectural features`
+    };
+
+    // Call Gemini API
+    const result = await model.generateContent([
+      enhancedPrompt.instruction,
+      imageObject,
+      enhancedPrompt.context
+    ]);
 
     console.log('Generation complete!');
 
-    const generatedImageUrl = task.output[0];
+    const response = await result.response;
+    const generatedImageUrl = response.text(); // or handle the image data according to Gemini's response format
     const projectId = uuidv4();
 
     // Save to database
