@@ -2,8 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const RunwayML = require('@runwayml/sdk').default;
-const { TaskFailedError } = require('@runwayml/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -204,18 +203,10 @@ app.post('/api/generate', async (req, res) => {
 
   } catch (error) {
     console.error('Generation error:', error);
-    
-    if (error instanceof TaskFailedError) {
-      res.status(500).json({ 
-        error: 'Image generation failed',
-        details: error.taskDetails 
-      });
-    } else {
-      res.status(500).json({ 
-        error: 'Generation failed',
-        message: error.message 
-      });
-    }
+    res.status(500).json({ 
+      error: 'Image generation failed',
+      message: error.message 
+    });
   }
 });
 
