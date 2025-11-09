@@ -6,7 +6,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@runwayml/sdk": "^3.5.0",
+    "@google-ai/generativelanguage": "^3.5.0",
     "@sendgrid/mail": "^7.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
@@ -14,6 +14,7 @@
     "ipaddr.js": "^2.2.0",
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.2",
+    "node-fetch": "^3.3.2",
     "path-to-regexp": "^8.3.0",
     "pg": "^8.11.0",
     "uuid": "^9.0.0"

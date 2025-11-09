@@ -2,13 +2,20 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const RunwayML = require('@runwayml/sdk').default;
-const { TaskFailedError } = require('@runwayml/sdk');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./database');
 
+let fetchFn = globalThis.fetch;
+if (!fetchFn) {
+  fetchFn = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+}
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'imagen-3.0';
+const GEMINI_API_VERSION = process.env.GEMINI_API_VERSION || 'v1beta';
+const GEMINI_API_BASE_URL = process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com';
 
 // In-memory storage for lightweight demo/testing usage
 // In production these should be persisted in the database (the app also uses the DB in many routes)
@@ -22,11 +29,6 @@ const emailAutomation = require('./email-automation');
 
 // Start email automation
 console.log('✅ Email automation started');
-
-// Initialize Runway client
-const client = new RunwayML({
-  apiKey: process.env.RUNWAYML_API_KEY
-});
 
 // Middleware
 app.use(cors());
@@ -63,6 +65,10 @@ const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
+const generatedUploadsDir = path.join(uploadsDir, 'generated');
+if (!fs.existsSync(generatedUploadsDir)) {
+  fs.mkdirSync(generatedUploadsDir, { recursive: true });
+}
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -79,6 +85,146 @@ const upload = multer({
   storage: storage,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
+
+/**
+ * Attempt to call the Gemini Images API with the provided payload.
+ * Tries a small list of endpoint suffixes to accommodate model-specific variations.
+ */
+async function generateGeminiImage({ prompt, imageBase64, mimeType }) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key not configured');
+  }
+
+  const payload = {
+    prompt: { text: prompt },
+    image: {
+      inlineData: {
+        mimeType,
+        data: imageBase64
+      }
+    }
+  };
+
+  const endpointSuffixes = [
+    `models/${GEMINI_IMAGE_MODEL}:edit`,
+    `models/${GEMINI_IMAGE_MODEL}:generateImage`,
+    `models/${GEMINI_IMAGE_MODEL}:generate`,
+    'models/imagegeneration:edit',
+    'models/imagegeneration:generateImage',
+    'models/imagegeneration:generate'
+  ];
+
+  let lastError;
+  for (const suffix of endpointSuffixes) {
+    try {
+      const url = `${GEMINI_API_BASE_URL}/${GEMINI_API_VERSION}/${suffix}?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+      const response = await fetchFn(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const raw = await response.text();
+      let parsedBody = null;
+      if (raw) {
+        try {
+          parsedBody = JSON.parse(raw);
+        } catch (parseError) {
+          // Non-JSON response, leave parsedBody as null
+        }
+      }
+      const body = parsedBody && typeof parsedBody === 'object' ? parsedBody : {};
+
+      if (!response.ok) {
+        const message =
+          body?.error?.message ||
+          (typeof raw === 'string' && raw.trim().length ? raw : `Gemini API request failed (${response.status})`);
+        const error = new Error(message);
+        error.status = response.status;
+        error.details = body?.error?.details;
+        throw error;
+      }
+
+      const imageResult = extractGeminiImage(body);
+      if (!imageResult) {
+        throw new Error('Gemini API response did not include image data');
+      }
+
+      return imageResult;
+    } catch (error) {
+      lastError = error;
+      if (error?.status && error.status !== 404) {
+        break;
+      }
+    }
+  }
+
+  throw lastError || new Error('Gemini image generation failed');
+}
+
+function extractGeminiImage(body) {
+  if (!body || typeof body !== 'object') return null;
+
+  const candidates = [];
+
+  const pushCandidate = (item) => {
+    if (!item || typeof item !== 'object') return;
+    const inlineData = item.inlineData || item;
+    const data = item.b64_json || item.b64Json || inlineData?.data || item.data || item.base64Data;
+    if (!data) return;
+    const mimeType = item.mime_type || item.mimeType || inlineData?.mimeType || 'image/png';
+    candidates.push({ base64: data, mimeType });
+  };
+
+  const ensureArray = (value) => {
+    if (!value) return [];
+    return Array.isArray(value) ? value : [value];
+  };
+
+  ensureArray(body.images).forEach(pushCandidate);
+  ensureArray(body.image).forEach(pushCandidate);
+  ensureArray(body.generatedImages).forEach(pushCandidate);
+  ensureArray(body.editedImages).forEach(pushCandidate);
+  if (body.editedImage) pushCandidate(body.editedImage);
+  if (body.result) ensureArray(body.result).forEach(pushCandidate);
+  if (body.output) ensureArray(body.output).forEach(pushCandidate);
+
+  const candidateSets = [
+    body.candidates,
+    body.response?.candidates,
+    body.responses
+  ];
+  candidateSets.forEach((set) => {
+    ensureArray(set).forEach((candidate) => {
+      ensureArray(candidate?.content?.parts).forEach((part) => {
+        if (part?.inlineData) {
+          pushCandidate(part.inlineData);
+        }
+      });
+    });
+  });
+
+  return candidates.length > 0 ? candidates[0] : null;
+}
+
+function normalizeBase64(data) {
+  if (!data) return data;
+  const cleaned = data.replace(/^data:[^,]+,/, '').replace(/\s/g, '');
+  return cleaned;
+}
+
+function getExtensionFromMime(mimeType) {
+  switch ((mimeType || '').toLowerCase()) {
+    case 'image/jpeg':
+    case 'image/jpg':
+      return 'jpg';
+    case 'image/webp':
+      return 'webp';
+    case 'image/png':
+    default:
+      return 'png';
+  }
+}
 
 // ROUTE 1: Test endpoint
 app.get('/api/health', async (req, res) => {
@@ -135,6 +281,10 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: 'Missing filename or prompt' });
     }
 
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'Gemini API key not configured' });
+    }
+
     // Read the uploaded image
     const imagePath = path.join(uploadsDir, filename);
     
@@ -151,26 +301,27 @@ app.post('/api/generate', async (req, res) => {
     if (ext === '.png') mimeType = 'image/png';
     if (ext === '.webp') mimeType = 'image/webp';
     
-    const dataUri = `data:${mimeType};base64,${base64Image}`;
+    console.log('Sending request to Gemini Image API...');
 
-    console.log('Sending request to Runway ML...');
+    const geminiResponse = await generateGeminiImage({
+      prompt,
+      imageBase64: base64Image,
+      mimeType
+    });
 
-    // Call Runway ML API
-    const task = await client.textToImage.create({
-      model: 'gen4_image',
-      ratio: '1024:1024',
-      promptText: `@original ${prompt}`,
-      referenceImages: [
-        {
-          uri: dataUri,
-          tag: 'original'
-        }
-      ]
-    }).waitForTaskOutput();
+    const outputMimeType = geminiResponse.mimeType || mimeType;
+    const normalizedBase64 = normalizeBase64(geminiResponse.base64);
 
-    console.log('Generation complete!');
+    if (!normalizedBase64) {
+      throw new Error('Gemini response did not include usable image data');
+    }
 
-    const generatedImageUrl = task.output[0];
+    const generatedFileName = `${uuidv4()}-gemini.${getExtensionFromMime(outputMimeType)}`;
+    const generatedFilePath = path.join(generatedUploadsDir, generatedFileName);
+    fs.writeFileSync(generatedFilePath, Buffer.from(normalizedBase64, 'base64'));
+
+    const relativeGeneratedPath = path.join('generated', generatedFileName).replace(/\\/g, '/');
+    const generatedImageUrl = `${req.protocol}://${req.get('host')}/uploads/${relativeGeneratedPath}`;
     const projectId = uuidv4();
 
     // Save to database
@@ -188,18 +339,12 @@ app.post('/api/generate', async (req, res) => {
 
   } catch (error) {
     console.error('Generation error:', error);
-    
-    if (error instanceof TaskFailedError) {
-      res.status(500).json({ 
-        error: 'Image generation failed',
-        details: error.taskDetails 
-      });
-    } else {
-      res.status(500).json({ 
-        error: 'Generation failed',
-        message: error.message 
-      });
-    }
+    const statusCode = error?.status === 429 ? 429 : 500;
+    res.status(statusCode).json({ 
+      error: 'Generation failed',
+      message: error.message,
+      details: error.details 
+    });
   }
 });
 
@@ -930,7 +1075,8 @@ app.get('*', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`✅ Runway API key configured: ${process.env.RUNWAYML_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`✅ Gemini API key configured: ${GEMINI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`✅ Gemini image model: ${GEMINI_IMAGE_MODEL}`);
   console.log(`✅ Test the API: http://localhost:${PORT}/api/health`);
 });
 
