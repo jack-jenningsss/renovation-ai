@@ -2,10 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const RunwayML = require('@runwayml/sdk').default;
-const { TaskFailedError } = require('@runwayml/sdk');
 const fs = require('fs');
 const path = require('path');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./database');
 
@@ -23,10 +22,10 @@ const emailAutomation = require('./email-automation');
 // Start email automation
 console.log('✅ Email automation started');
 
-// Initialize Runway client
-const client = new RunwayML({
-  apiKey: process.env.RUNWAYML_API_KEY
-});
+// Initialize Gemini client
+const geminiClient = process.env.GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+  : null;
 
 // Middleware
 app.use(cors());
@@ -120,88 +119,108 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
       filename: req.file.filename,
       message: 'Image uploaded successfully'
     });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: 'Upload failed' });
-  }
-});
-
-// ROUTE 3: Generate renovation image
-app.post('/api/generate', async (req, res) => {
-  try {
-    const { filename, prompt, companyId } = req.body;
-
-    if (!filename || !prompt) {
-      return res.status(400).json({ error: 'Missing filename or prompt' });
+    } catch (error) {
+      console.error('Upload error:', error);
+      res.status(500).json({ error: 'Upload failed' });
     }
-
-    // Read the uploaded image
-    const imagePath = path.join(uploadsDir, filename);
-    
-    if (!fs.existsSync(imagePath)) {
-      return res.status(404).json({ error: 'Image not found' });
-    }
-
-    const imageBuffer = fs.readFileSync(imagePath);
-    const base64Image = imageBuffer.toString('base64');
-    
-    // Determine mime type based on file extension
-    const ext = path.extname(filename).toLowerCase();
-    let mimeType = 'image/jpeg';
-    if (ext === '.png') mimeType = 'image/png';
-    if (ext === '.webp') mimeType = 'image/webp';
-    
-    const dataUri = `data:${mimeType};base64,${base64Image}`;
-
-    console.log('Sending request to Runway ML...');
-
-    // Call Runway ML API
-    const task = await client.textToImage.create({
-      model: 'gen4_image',
-      ratio: '1024:1024',
-      promptText: `@original ${prompt}`,
-      referenceImages: [
-        {
-          uri: dataUri,
-          tag: 'original'
-        }
-      ]
-    }).waitForTaskOutput();
-
-    console.log('Generation complete!');
-
-    const generatedImageUrl = task.output[0];
-    const projectId = uuidv4();
-
-    // Save to database
-    await db.query(
-      `INSERT INTO projects (id, company_id, original_image, generated_image, prompt)
-      VALUES ($1, $2, $3, $4, $5)`,
-      [projectId, companyId || 'demo_company', filename, generatedImageUrl, prompt]
-    );
-
-    res.json({
-      success: true,
-      generatedImageUrl: generatedImageUrl,
-      projectId: projectId
-    });
-
-  } catch (error) {
-    console.error('Generation error:', error);
-    
-    if (error instanceof TaskFailedError) {
-      res.status(500).json({ 
-        error: 'Image generation failed',
-        details: error.taskDetails 
+  });
+  
+  // ROUTE 3: Generate renovation image
+  app.post('/api/generate', async (req, res) => {
+    try {
+      const { filename, prompt, companyId } = req.body;
+  
+      if (!filename || !prompt) {
+        return res.status(400).json({ error: 'Missing filename or prompt' });
+      }
+  
+      if (!geminiClient) {
+        return res.status(500).json({ error: 'Gemini API key not configured on server' });
+      }
+  
+      // Read the uploaded image
+      const imagePath = path.join(uploadsDir, filename);
+      
+      if (!fs.existsSync(imagePath)) {
+        return res.status(404).json({ error: 'Image not found' });
+      }
+  
+      const imageBuffer = fs.readFileSync(imagePath);
+      const base64Image = imageBuffer.toString('base64');
+      
+      // Determine mime type based on file extension
+      const ext = path.extname(filename).toLowerCase();
+      let mimeType = 'image/jpeg';
+      if (ext === '.png') mimeType = 'image/png';
+      if (ext === '.webp') mimeType = 'image/webp';
+      if (ext === '.heic' || ext === '.heif') mimeType = 'image/heic';
+  
+      console.log('Sending request to Gemini for image generation...');
+  
+      const model = geminiClient.getGenerativeModel({
+        model: process.env.GEMINI_IMAGE_MODEL || 'gemini-1.5-flash'
       });
-    } else {
+  
+      const request = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  data: base64Image,
+                  mimeType
+                }
+              },
+              {
+                text: prompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          responseMimeType: 'image/png'
+        }
+      };
+  
+      const result = await model.generateContent(request);
+      const response = await result.response;
+      const imagePart = response?.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
+  
+      if (!imagePart) {
+        console.error('Gemini response did not include an image payload', response);
+        return res.status(500).json({ error: 'Gemini did not return an image' });
+      }
+  
+      const generatedBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+      const generatedFilename = `${uuidv4()}-generated.png`;
+      const generatedPath = path.join(uploadsDir, generatedFilename);
+      fs.writeFileSync(generatedPath, generatedBuffer);
+  
+      const generatedImageUrl = `${req.protocol}://${req.get('host')}/uploads/${generatedFilename}`;
+      const projectId = uuidv4();
+  
+      // Save to database
+      await db.query(
+        `INSERT INTO projects (id, company_id, original_image, generated_image, prompt)
+        VALUES ($1, $2, $3, $4, $5)`,
+        [projectId, companyId || 'demo_company', filename, generatedImageUrl, prompt]
+      );
+  
+      res.json({
+        success: true,
+        generatedImageUrl,
+        projectId
+      });
+  
+    } catch (error) {
+      console.error('Generation error:', error);
       res.status(500).json({ 
         error: 'Generation failed',
         message: error.message 
       });
     }
-  }
-});
+  });
 
 // ROUTE 4: Get all projects
 app.get('/api/projects', async (req, res) => {
@@ -930,7 +949,7 @@ app.get('*', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`✅ Runway API key configured: ${process.env.RUNWAYML_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`✅ Gemini API key configured: ${process.env.GEMINI_API_KEY ? 'Yes' : 'No'}`);
   console.log(`✅ Test the API: http://localhost:${PORT}/api/health`);
 });
 
