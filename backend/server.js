@@ -128,97 +128,46 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
   // ROUTE 3: Generate renovation image
   app.post('/api/generate', async (req, res) => {
     try {
-      const { filename, prompt, companyId } = req.body;
-  
+      const { filename, prompt } = req.body;
+
       if (!filename || !prompt) {
         return res.status(400).json({ error: 'Missing filename or prompt' });
       }
-  
-      if (!geminiClient) {
-        return res.status(500).json({ error: 'Gemini API key not configured on server' });
-      }
-  
+
       // Read the uploaded image
       const imagePath = path.join(uploadsDir, filename);
-      
       if (!fs.existsSync(imagePath)) {
         return res.status(404).json({ error: 'Image not found' });
       }
-  
+
       const imageBuffer = fs.readFileSync(imagePath);
       const base64Image = imageBuffer.toString('base64');
-      
-      // Determine mime type based on file extension
-      const ext = path.extname(filename).toLowerCase();
-      let mimeType = 'image/jpeg';
-      if (ext === '.png') mimeType = 'image/png';
-      if (ext === '.webp') mimeType = 'image/webp';
-      if (ext === '.heic' || ext === '.heif') mimeType = 'image/heic';
-  
-      console.log('Sending request to Gemini for image generation...');
-  
-      const model = geminiClient.getGenerativeModel({
-        model: process.env.GEMINI_IMAGE_MODEL || 'gemini-1.5-flash'
-      });
-  
-      const request = {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  data: base64Image,
-                  mimeType
-                }
-              },
-              {
-                text: prompt
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: 'image/png'
+
+      // Prepare the request for Gemini
+      const geminiRequest = {
+        prompt: prompt,
+        image: {
+          data: base64Image,
+          mimeType: 'image/jpeg' // Adjust based on your image type
         }
       };
-  
-      const result = await model.generateContent(request);
-      const response = await result.response;
-      const imagePart = response?.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
-  
-      if (!imagePart) {
-        console.error('Gemini response did not include an image payload', response);
-        return res.status(500).json({ error: 'Gemini did not return an image' });
+
+      // Call Gemini API
+      const geminiResponse = await geminiClient.generateImage(geminiRequest);
+
+      if (!geminiResponse || !geminiResponse.generatedImage) {
+        throw new Error('Failed to generate image using Gemini');
       }
-  
-      const generatedBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
-      const generatedFilename = `${uuidv4()}-generated.png`;
-      const generatedPath = path.join(uploadsDir, generatedFilename);
-      fs.writeFileSync(generatedPath, generatedBuffer);
-  
-      const generatedImageUrl = `${req.protocol}://${req.get('host')}/uploads/${generatedFilename}`;
-      const projectId = uuidv4();
-  
-      // Save to database
-      await db.query(
-        `INSERT INTO projects (id, company_id, original_image, generated_image, prompt)
-        VALUES ($1, $2, $3, $4, $5)`,
-        [projectId, companyId || 'demo_company', filename, generatedImageUrl, prompt]
-      );
-  
+
+      const generatedImageUrl = geminiResponse.generatedImage;
+
       res.json({
         success: true,
-        generatedImageUrl,
-        projectId
+        generatedImageUrl: generatedImageUrl
       });
-  
     } catch (error) {
-      console.error('Generation error:', error);
-      res.status(500).json({ 
-        error: 'Generation failed',
-        message: error.message 
-      });
+      console.error('Image generation error:', error);
+      res.status(500).json({ error: 'Image generation failed', message: error.message });
     }
   });
 
@@ -705,6 +654,8 @@ app.post('/api/demo/create', async (req, res) => {
       );
       
       console.log('✅ Demo company created');
+    } else {
+      console.log('✅ Demo company already exists');
     }
     
     res.json({
@@ -717,7 +668,7 @@ app.post('/api/demo/create', async (req, res) => {
     });
   } catch (error) {
     console.error('Demo creation error:', error);
-    res.status(500).json({ error: 'Failed to create demo company' });
+    res.status(500).json({ error: 'Failed to create demo company', message: error.message });
   }
 });
 
