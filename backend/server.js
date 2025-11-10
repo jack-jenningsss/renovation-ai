@@ -27,6 +27,11 @@ const geminiClient = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
 
+// Ensure Gemini client initialization
+if (!geminiClient) {
+  console.error('Gemini API key is missing. Please set GEMINI_API_KEY in the environment variables.');
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -128,6 +133,10 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
   // ROUTE 3: Generate renovation image
   app.post('/api/generate', async (req, res) => {
     try {
+      if (!geminiClient) {
+        return res.status(500).json({ error: 'Gemini client is not initialized. Check your API key.' });
+      }
+
       const { filename, prompt } = req.body;
 
       if (!filename || !prompt) {
