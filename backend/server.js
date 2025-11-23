@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { v4: uuidv4 } = require('uuid');
+const mime = require('mime-types');
 const db = require('./database');
 
 
@@ -26,6 +27,25 @@ console.log('✅ Email automation started');
 const geminiClient = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-1.5-flash';
+let geminiImageModel = null;
+
+const getGeminiImageModel = () => {
+  if (!geminiClient) {
+    return null;
+  }
+  if (!geminiImageModel) {
+    geminiImageModel = geminiClient.getGenerativeModel({
+      model: GEMINI_IMAGE_MODEL,
+      generationConfig: {
+        responseMimeType: 'image/png',
+        temperature: 0.4,
+        topP: 0.95
+      }
+    });
+  }
+  return geminiImageModel;
+};
 
 // Ensure Gemini client initialization
 if (!geminiClient) {
@@ -130,55 +150,71 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
     }
   });
   
-  // ROUTE 3: Generate renovation image
-  app.post('/api/generate', async (req, res) => {
-    try {
-      if (!geminiClient) {
-        return res.status(500).json({ error: 'Gemini client is not initialized. Check your API key.' });
-      }
-
-      const { filename, prompt } = req.body;
-
-      if (!filename || !prompt) {
-        return res.status(400).json({ error: 'Missing filename or prompt' });
-      }
-
-      // Read the uploaded image
-      const imagePath = path.join(uploadsDir, filename);
-      if (!fs.existsSync(imagePath)) {
-        return res.status(404).json({ error: 'Image not found' });
-      }
-
-      const imageBuffer = fs.readFileSync(imagePath);
-      const base64Image = imageBuffer.toString('base64');
-
-      // Prepare the request for Gemini
-      const geminiRequest = {
-        prompt: prompt,
-        image: {
-          data: base64Image,
-          mimeType: 'image/jpeg' // Adjust based on your image type
-        }
-      };
-
-      // Call Gemini API
-      const geminiResponse = await geminiClient.generateImage(geminiRequest);
-
-      if (!geminiResponse || !geminiResponse.generatedImage) {
-        throw new Error('Failed to generate image using Gemini');
-      }
-
-      const generatedImageUrl = geminiResponse.generatedImage;
-
-      res.json({
-        success: true,
-        generatedImageUrl: generatedImageUrl
-      });
-    } catch (error) {
-      console.error('Image generation error:', error);
-      res.status(500).json({ error: 'Image generation failed', message: error.message });
+// ROUTE 3: Generate renovation image
+app.post('/api/generate', async (req, res) => {
+  try {
+    const model = getGeminiImageModel();
+    if (!model) {
+      return res.status(500).json({ error: 'Gemini client is not initialized. Check your API key.' });
     }
-  });
+
+    const { filename, prompt } = req.body;
+
+    if (!filename || !prompt) {
+      return res.status(400).json({ error: 'Missing filename or prompt' });
+    }
+
+    // Read the uploaded image
+    const imagePath = path.join(uploadsDir, filename);
+    if (!fs.existsSync(imagePath)) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    const imageBuffer = fs.readFileSync(imagePath);
+    const base64Image = imageBuffer.toString('base64');
+    const mimeType = mime.lookup(imagePath) || 'image/jpeg';
+
+    const promptParts = [
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType
+        }
+      },
+      {
+        text: `You are a high-end renovation visualization specialist. Starting from the previous photo, apply this transformation: ${prompt}. Keep the structure realistic, use accurate perspective, and output only the updated photo.`
+      }
+    ];
+
+    // Call Gemini API
+    const geminiResult = await model.generateContent(promptParts);
+    const imagePart = geminiResult?.response?.candidates
+      ?.flatMap(candidate => candidate?.content?.parts || [])
+      ?.find(part => part?.inlineData?.data);
+
+    if (!imagePart?.inlineData?.data) {
+      throw new Error('Gemini did not return image data');
+    }
+
+    const generatedBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+    const generatedFilename = `generated-${uuidv4()}.png`;
+    const generatedPath = path.join(uploadsDir, generatedFilename);
+    fs.writeFileSync(generatedPath, generatedBuffer);
+
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.get('host');
+    const generatedImageUrl = `${protocol}://${host}/uploads/${generatedFilename}`;
+
+    res.json({
+      success: true,
+      generatedImageUrl,
+      filename: generatedFilename
+    });
+  } catch (error) {
+    console.error('Image generation error:', error);
+    res.status(500).json({ error: 'Image generation failed', message: error.message });
+  }
+});
 
 // ROUTE 4: Get all projects
 app.get('/api/projects', async (req, res) => {
