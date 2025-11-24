@@ -27,30 +27,36 @@ console.log('✅ Email automation started');
 const geminiClient = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
+
+if (!geminiClient) {
+  console.error('Gemini API key is missing. Please set GEMINI_API_KEY in the environment variables.');
+}
+
 const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-1.5-flash';
 let geminiImageModel = null;
 
 const getGeminiImageModel = () => {
   if (!geminiClient) {
+    console.error('Gemini client is not initialized. Check your API key.');
     return null;
   }
   if (!geminiImageModel) {
-    geminiImageModel = geminiClient.getGenerativeModel({
-      model: GEMINI_IMAGE_MODEL,
-      generationConfig: {
-        responseMimeType: 'image/png',
-        temperature: 0.4,
-        topP: 0.95
-      }
-    });
+    try {
+      geminiImageModel = geminiClient.getGenerativeModel({
+        model: GEMINI_IMAGE_MODEL,
+        generationConfig: {
+          responseMimeType: 'image/png',
+          temperature: 0.4,
+          topP: 0.95
+        }
+      });
+    } catch (error) {
+      console.error('Error initializing Gemini image model:', error);
+      return null;
+    }
   }
   return geminiImageModel;
 };
-
-// Ensure Gemini client initialization
-if (!geminiClient) {
-  console.error('Gemini API key is missing. Please set GEMINI_API_KEY in the environment variables.');
-}
 
 // Middleware
 app.use(cors());
