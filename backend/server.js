@@ -4,7 +4,6 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { v4: uuidv4 } = require('uuid');
 const mime = require('mime-types');
 const db = require('./database');
@@ -23,40 +22,15 @@ const emailAutomation = require('./email-automation');
 // Start email automation
 console.log('✅ Email automation started');
 
-// Initialize Gemini client
-const geminiClient = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-  : null;
+// RunwayML API configuration
+const RUNWAYML_API_KEY = process.env.RUNWAYML_API_KEY;
+const RUNWAYML_API_URL = 'https://api.runwayml.com/v1/inference';
 
-if (!geminiClient) {
-  console.error('Gemini API key is missing. Please set GEMINI_API_KEY in the environment variables.');
+if (!RUNWAYML_API_KEY) {
+  console.error('⚠️ RunwayML API key is missing. Image generation will not work.');
+} else {
+  console.log('✅ RunwayML API key configured');
 }
-
-const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-1.5-flash';
-let geminiImageModel = null;
-
-const getGeminiImageModel = () => {
-  if (!geminiClient) {
-    console.error('Gemini client is not initialized. Check your API key.');
-    return null;
-  }
-  if (!geminiImageModel) {
-    try {
-      geminiImageModel = geminiClient.getGenerativeModel({
-        model: GEMINI_IMAGE_MODEL,
-        generationConfig: {
-          responseMimeType: 'image/png',
-          temperature: 0.4,
-          topP: 0.95
-        }
-      });
-    } catch (error) {
-      console.error('Error initializing Gemini image model:', error);
-      return null;
-    }
-  }
-  return geminiImageModel;
-};
 
 // Middleware
 app.use(cors());
@@ -159,9 +133,8 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
 // ROUTE 3: Generate renovation image
 app.post('/api/generate', async (req, res) => {
   try {
-    const model = getGeminiImageModel();
-    if (!model) {
-      return res.status(500).json({ error: 'Gemini client is not initialized. Check your API key.' });
+    if (!RUNWAYML_API_KEY) {
+      return res.status(500).json({ error: 'RunwayML API key is not configured. Please set RUNWAYML_API_KEY in environment variables.' });
     }
 
     const { filename, prompt } = req.body;
@@ -178,31 +151,37 @@ app.post('/api/generate', async (req, res) => {
 
     const imageBuffer = fs.readFileSync(imagePath);
     const base64Image = imageBuffer.toString('base64');
-    const mimeType = mime.lookup(imagePath) || 'image/jpeg';
 
-    const promptParts = [
-      {
-        inlineData: {
-          data: base64Image,
-          mimeType
-        }
+    // Call RunwayML API for image-to-image generation
+    const runwayResponse = await fetch(RUNWAYML_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RUNWAYML_API_KEY}`,
+        'Content-Type': 'application/json'
       },
-      {
-        text: `You are a high-end renovation visualization specialist. Starting from the previous photo, apply this transformation: ${prompt}. Keep the structure realistic, use accurate perspective, and output only the updated photo.`
-      }
-    ];
+      body: JSON.stringify({
+        model: 'gen-3',
+        input: {
+          image: base64Image,
+          prompt: `Professional architectural visualization: ${prompt}. Maintain realistic proportions, lighting, and materials. High quality, photorealistic rendering.`
+        }
+      })
+    });
 
-    // Call Gemini API
-    const geminiResult = await model.generateContent(promptParts);
-    const imagePart = geminiResult?.response?.candidates
-      ?.flatMap(candidate => candidate?.content?.parts || [])
-      ?.find(part => part?.inlineData?.data);
-
-    if (!imagePart?.inlineData?.data) {
-      throw new Error('Gemini did not return image data');
+    if (!runwayResponse.ok) {
+      const errorText = await runwayResponse.text();
+      console.error('RunwayML API error:', errorText);
+      throw new Error(`RunwayML API failed: ${runwayResponse.status} - ${errorText}`);
     }
 
-    const generatedBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+    const runwayData = await runwayResponse.json();
+    
+    if (!runwayData.output || !runwayData.output.image) {
+      throw new Error('RunwayML did not return image data');
+    }
+
+    // Save the generated image
+    const generatedBuffer = Buffer.from(runwayData.output.image, 'base64');
     const generatedFilename = `generated-${uuidv4()}.png`;
     const generatedPath = path.join(uploadsDir, generatedFilename);
     fs.writeFileSync(generatedPath, generatedBuffer);
@@ -951,7 +930,7 @@ app.get('*', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`✅ Gemini API key configured: ${process.env.GEMINI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`✅ RunwayML API key configured: ${RUNWAYML_API_KEY ? 'Yes' : 'No'}`);
   console.log(`✅ Test the API: http://localhost:${PORT}/api/health`);
 });
 
