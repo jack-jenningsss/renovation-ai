@@ -8,7 +8,6 @@ const { v4: uuidv4 } = require('uuid');
 const mime = require('mime-types');
 const db = require('./database');
 
-
 // In-memory storage for lightweight demo/testing usage
 // In production these should be persisted in the database (the app also uses the DB in many routes)
 const companies = new Map();
