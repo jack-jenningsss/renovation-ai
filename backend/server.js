@@ -24,7 +24,7 @@ console.log('✅ Email automation started');
 
 // RunwayML API configuration
 const RUNWAYML_API_KEY = process.env.RUNWAYML_API_KEY;
-const RUNWAYML_API_URL = 'https://api.runwayml.com/v1/inference';
+const RUNWAYML_API_URL = 'https://api.runwayml.com/v1';
 
 if (!RUNWAYML_API_KEY) {
   console.error('⚠️ RunwayML API key is missing. Image generation will not work.');
@@ -151,37 +151,52 @@ app.post('/api/generate', async (req, res) => {
 
     const imageBuffer = fs.readFileSync(imagePath);
     const base64Image = imageBuffer.toString('base64');
+    const mimeType = mime.lookup(imagePath) || 'image/jpeg';
 
-    // Call RunwayML API for image-to-image generation
-    const runwayResponse = await fetch(RUNWAYML_API_URL, {
+    // Call RunwayML API - Gen-3 Alpha Turbo for image-to-image
+    const runwayResponse = await fetch(`${RUNWAYML_API_URL}/image-to-image`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${RUNWAYML_API_KEY}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Runway-Version': '2024-11-06'
       },
       body: JSON.stringify({
-        model: 'gen-3',
-        input: {
-          image: base64Image,
-          prompt: `Professional architectural visualization: ${prompt}. Maintain realistic proportions, lighting, and materials. High quality, photorealistic rendering.`
-        }
+        model: 'gen3a_turbo',
+        prompt_image: `data:${mimeType};base64,${base64Image}`,
+        prompt_text: `Professional architectural visualization: ${prompt}. Maintain realistic proportions, lighting, and materials. High quality, photorealistic rendering.`,
+        width: 1280,
+        height: 768
       })
     });
 
     if (!runwayResponse.ok) {
       const errorText = await runwayResponse.text();
-      console.error('RunwayML API error:', errorText);
+      console.error('RunwayML API error:', runwayResponse.status, errorText);
       throw new Error(`RunwayML API failed: ${runwayResponse.status} - ${errorText}`);
     }
 
     const runwayData = await runwayResponse.json();
+    console.log('RunwayML response:', JSON.stringify(runwayData).substring(0, 200));
     
-    if (!runwayData.output || !runwayData.output.image) {
-      throw new Error('RunwayML did not return image data');
+    // Handle the response - it might be a URL or base64
+    let generatedImageData;
+    if (runwayData.image) {
+      // If it's a base64 string
+      generatedImageData = runwayData.image;
+    } else if (runwayData.url) {
+      // If it's a URL, fetch the image
+      const imageResponse = await fetch(runwayData.url);
+      const imageBuffer = await imageResponse.buffer();
+      generatedImageData = imageBuffer.toString('base64');
+    } else if (runwayData.output) {
+      generatedImageData = runwayData.output;
+    } else {
+      throw new Error('RunwayML did not return image data in expected format');
     }
 
     // Save the generated image
-    const generatedBuffer = Buffer.from(runwayData.output.image, 'base64');
+    const generatedBuffer = Buffer.from(generatedImageData.replace(/^data:image\/\w+;base64,/, ''), 'base64');
     const generatedFilename = `generated-${uuidv4()}.png`;
     const generatedPath = path.join(uploadsDir, generatedFilename);
     fs.writeFileSync(generatedPath, generatedBuffer);
