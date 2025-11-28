@@ -86,13 +86,22 @@ async function uploadImage(file) {
             body: formData
         });
 
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Upload failed');
+        }
+
         const data = await response.json();
         if (data.success) {
             uploadedFilename = data.filename;
             checkFormComplete();
+            console.log('✅ Image uploaded:', uploadedFilename);
+        } else {
+            throw new Error(data.error || 'Upload failed');
         }
     } catch (err) {
-        showError('Upload failed. Please try again.');
+        console.error('Upload error:', err);
+        showError('Upload failed: ' + err.message);
     }
 }
 
