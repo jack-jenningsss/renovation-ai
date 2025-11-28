@@ -24,7 +24,7 @@ console.log('✅ Email automation started');
 
 // RunwayML API configuration
 const RUNWAYML_API_KEY = process.env.RUNWAYML_API_KEY;
-const RUNWAYML_API_URL = 'https://api.runwayml.com/v1';
+const RUNWAYML_API_URL = 'https://api.dev.runwayml.com/v1';
 
 if (!RUNWAYML_API_KEY) {
   console.error('⚠️ RunwayML API key is missing. Image generation will not work.');
