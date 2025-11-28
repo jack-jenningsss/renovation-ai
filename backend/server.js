@@ -153,8 +153,10 @@ app.post('/api/generate', async (req, res) => {
     const base64Image = imageBuffer.toString('base64');
     const mimeType = mime.lookup(imagePath) || 'image/jpeg';
 
-    // Call RunwayML API - Gen-3 Alpha Turbo for image-to-image
-    const runwayResponse = await fetch(`${RUNWAYML_API_URL}/image-to-image`, {
+    console.log('Creating RunwayML task...');
+
+    // Call RunwayML API - Create a task
+    const runwayResponse = await fetch(`${RUNWAYML_API_URL}/tasks`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${RUNWAYML_API_KEY}`,
@@ -162,11 +164,15 @@ app.post('/api/generate', async (req, res) => {
         'X-Runway-Version': '2024-11-06'
       },
       body: JSON.stringify({
-        model: 'gen3a_turbo',
-        prompt_image: `data:${mimeType};base64,${base64Image}`,
-        prompt_text: `Professional architectural visualization: ${prompt}. Maintain realistic proportions, lighting, and materials. High quality, photorealistic rendering.`,
-        width: 1280,
-        height: 768
+        taskType: 'gen3a_turbo',
+        internal: false,
+        options: {
+          name: 'Renovation Visualization',
+          image_prompt: `data:${mimeType};base64,${base64Image}`,
+          text_prompt: `Professional architectural visualization: ${prompt}. Maintain realistic proportions, lighting, and materials. High quality, photorealistic rendering.`,
+          duration: 5,
+          ratio: '16:9'
+        }
       })
     });
 
@@ -176,27 +182,50 @@ app.post('/api/generate', async (req, res) => {
       throw new Error(`RunwayML API failed: ${runwayResponse.status} - ${errorText}`);
     }
 
-    const runwayData = await runwayResponse.json();
-    console.log('RunwayML response:', JSON.stringify(runwayData).substring(0, 200));
+    const taskData = await runwayResponse.json();
+    console.log('RunwayML task created:', taskData.id);
     
-    // Handle the response - it might be a URL or base64
-    let generatedImageData;
-    if (runwayData.image) {
-      // If it's a base64 string
-      generatedImageData = runwayData.image;
-    } else if (runwayData.url) {
-      // If it's a URL, fetch the image
-      const imageResponse = await fetch(runwayData.url);
-      const imageBuffer = await imageResponse.buffer();
-      generatedImageData = imageBuffer.toString('base64');
-    } else if (runwayData.output) {
-      generatedImageData = runwayData.output;
-    } else {
-      throw new Error('RunwayML did not return image data in expected format');
+    // Poll for task completion (simplified version)
+    let attempts = 0;
+    const maxAttempts = 60; // 60 seconds max
+    let taskStatus;
+
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+      
+      const statusResponse = await fetch(`${RUNWAYML_API_URL}/tasks/${taskData.id}`, {
+        headers: {
+          'Authorization': `Bearer ${RUNWAYML_API_KEY}`,
+          'X-Runway-Version': '2024-11-06'
+        }
+      });
+
+      taskStatus = await statusResponse.json();
+      console.log('Task status:', taskStatus.status);
+
+      if (taskStatus.status === 'SUCCEEDED') {
+        break;
+      } else if (taskStatus.status === 'FAILED') {
+        throw new Error('RunwayML task failed: ' + (taskStatus.error || 'Unknown error'));
+      }
+
+      attempts++;
     }
 
-    // Save the generated image
-    const generatedBuffer = Buffer.from(generatedImageData.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    if (taskStatus.status !== 'SUCCEEDED') {
+      throw new Error('RunwayML task timed out');
+    }
+
+    // Download the generated video/image
+    const outputUrl = taskStatus.output?.[0] || taskStatus.artifacts?.[0]?.url;
+    if (!outputUrl) {
+      throw new Error('No output URL in RunwayML response');
+    }
+
+    console.log('Downloading generated image from:', outputUrl);
+    const imageResponse = await fetch(outputUrl);
+    const generatedBuffer = await imageResponse.buffer();
+    
     const generatedFilename = `generated-${uuidv4()}.png`;
     const generatedPath = path.join(uploadsDir, generatedFilename);
     fs.writeFileSync(generatedPath, generatedBuffer);
